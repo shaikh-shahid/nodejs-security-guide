@@ -2,6 +2,8 @@
 
 The one thing that developers tend to considers at the end of the development cycle is the “security” of the application. A secure application is not a luxury, it’s a necessity. You should consider the security of your application at every phase of the development such as architecture, design, code, and finally the deployment.
 
+Tutorial link: https://codeforgeek.com/a-guide-to-securing-node-js-applications
+
 In this tutorial, we are going to learn ways to secure our Node.js application. Let’s dive in.
 
 ## Data Validation – Never Trust Your Users
@@ -181,3 +183,149 @@ acl.isAllowed('joed', 'blogs', 'view', (err, res) => {
 });
 ```
 Checkout the acl2 documentation for more information and example code.
+
+## Bruteforce Attack Prevention
+Bruteforce is an attack where a hacker uses software to try different passwords repetitively until access is granted i.e valid password is found. To prevent a Bruteforce attack, one of the simplest ways is to **wait it out** approach. When someone is trying to login into your system and tried an invalid password more than 3 times, make them wait for 60 seconds or so before trying again. This way the attacker is going to be slow and it's gonna take them forever to crack a password. 
+
+Another approach to preventing it is to ban the IP that is generating invalid login requests. Your system allows 3 wrong attempts per IP in 24 hours. If someone tries to do brute-forcing then block the IP for 24 hours. This rate-limiting approach is been used by lots of companies to prevent brute-force attacks. If you are using the Express framework, there is a middleware module to enable rate-limiting in incoming requests. Its called **express=brute**. 
+
+You can check the example code below.
+
+Install the dependency.
+
+```bash
+npm install express-brute --save
+```
+Enable it in your route.
+```javascript
+const ExpressBrute = require('express-brute');
+const store = new ExpressBrute.MemoryStore(); // stores state locally, don't use this in production
+const bruteforce = new ExpressBrute(store);
+ 
+app.post('/auth',
+    bruteforce.prevent, // error 429 if we hit this route too often
+    function (req, res, next) {
+        res.send('Success!');
+    }
+);
+//...
+```
+The example code is taken from **[express-brute](https://www.npmjs.com/package/express-brute)** module documentation.
+
+## Secure Transmission using HTTPS
+
+It is 2021 and you must use HTTPS to send your data and traffic over the internet securely. HTTPS is an extension of the HTTP protocol with secure communication support. By using HTTPS, you can make sure that the traffic and your user's data over the internet is encrypted and safe. 
+
+I am not going to explain how HTTPS works in the detail here. We are going to focus on the implementation part of it. I highly recommend you to use **LetsEncrypt** to generate the SSL certificates for all of your domain/subdomain. 
+
+It's free and runs a daemon to update SSL certificates every 90 days. You can learn more about LetsEncrypt [here](https://letsencrypt.org/getting-started/). You can opt for a domain-specific certificate or a wildcard certificate if you have multiple subdomains. LetsEncrypt supports both. 
+
+You can use LetsEncrypt for both Apache and Nginx based web servers. I highly recommend performing SSL negotiations in the reverse proxy or at the gateway layer because it is a heavy computing operation.
+
+## Session Hijacking Prevention
+
+The session is an important part of any dynamic web application. Having a secure session in the application is a must for the users and systems safety. A session is implemented using cookies and it must be kept secure to prevent session hijacking. The following is a list of the attributes that can be set for each cookie and what they mean:
+
+-   **secure** - this attribute tells the browser to only send the cookie if the request is being sent over HTTPS.
+-   **HttpOnly** - this attribute is used to help prevent attacks such as cross-site scripting since it does not allow the cookie to be accessed via JavaScript.
+-   **domain** - this attribute is used to compare against the domain of the server in which the URL is being requested. If the domain matches or if it is a sub-domain, then the path attribute will be checked next.
+-   **path** - in addition to the domain, the URL path that the cookie is valid for can be specified. If the domain and path match, then the cookie will be sent in the request.
+-   **expires** - this attribute is used to set persistent cookies since the cookie does not expire until the set date is exceeded
+
+You can use **express-session** npm module to perform session management in the Express framework. 
+
+```javascript
+const express = require('express');
+const session = require('express-session');
+const app = express();
+
+app.use(session({
+  secret: 'keyboard cat',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: true, path: '/'}
+}));
+```
+You can learn more about Express session handling [here](https://codeforgeek.com/manage-session-using-node-js-express-4/).
+
+## Cross Site Request Forgery (CSRF) Attack Prevention
+CSRF is an attack where that manipulates a trusted user of a system to execute unwanted malicious actions on a web application. In Node.js, we can use **csurf** module to mitigate CSRF attack. This module requires either **express-session** or **cookie-parser** to be initialized first. You can check out the example code below. 
+
+```javascript
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const csrf = require('csurf');
+const bodyParser = require('body-parser');
+ 
+// setup route middlewares
+const csrfProtection = csrf({ cookie: true });
+const parseForm = bodyParser.urlencoded({ extended: false });
+ 
+// create express app
+const app = express();
+ 
+// we need this because "cookie" is true in csrfProtection
+app.use(cookieParser());
+ 
+app.get('/form', csrfProtection, function(req, res) {
+  // pass the csrfToken to the view
+  res.render('send', { csrfToken: req.csrfToken() });
+});
+ 
+app.post('/process', parseForm, csrfProtection, function(req, res) {
+  res.send('data is being processed');
+});
+
+app.listen(3000);
+```
+On the web page, you need to create a hidden input type with the value of the CSRF token. For example.
+```html
+<form action="/process" method="POST">
+  <input type="hidden" name="_csrf" value="{{csrfToken}}">
+ 
+  Favorite color: <input type="text" name="favoriteColor">
+  <button type="submit">Submit</button>
+</form>
+```
+In the case of AJAX requests, you can pass the CSRF token in the header.
+```javascript
+var token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+  headers: {
+    'CSRF-Token': token
+  }
+```
+## Denial of Service
+Denial of service or DOS is a type of attack where attackers tried to bring down the service or make it inaccessible to users by disrupting the system. The attacker generally flooded the systems with lots of traffic or requests which in turn increases the CPU and memory load leading to a system crash. To mitigate DOS attacks in your Node.js application, the first step would be the identification of such an event. I highly recommend these two modules to be integrated into the system.
+
+1.  Account lockout - After n number of failed attempts, lock the account or IP address for a period of time (say 24h?)
+2.  Rate limiting - Limit the users to request the system n number of times within a specific period, for example, 3 requests per minute from an individual user
+
+The Regular expression Denial of service attack (ReDOS)is a type of DOS attack where the attacker exploits the regular expression implementation in the system. Some regular expression takes heavy computing power to execute and the attacker can exploit it by submitting requests that involve regular expression in the system which in turns increases the load on the system leading to system failure. You can use software like [this](https://github.com/davisjam/vuln-regex-detector) to detect dangerous regular expression and avoid to use them in your system.
+
+## Dependencies Validation
+We all use tons of dependencies in our projects. We need to check and validate these dependencies as well to ensure the security of the overall project. NPM already has an audit feature to find the vulnerability of the project. Just run the command shown below in your source code directory. 
+```
+npm audit
+``` 
+To fix the vulnerability, you can run this command. 
+```
+npm audit fix
+``` 
+You can also run the dry run to check the fix before applying it to your project. 
+``` 
+npm audit fix --dry-run --json
+```
+## HTTP Security Headers
+
+HTTP provides several security headers that can prevent commonly known attacks. If you are using the Express framework then you can use a module called **[helmet](https://helmetjs.github.io/)** to enable all security headers with a single line of code. ` npm install helmet --save` Here is how to use it. ` const express = require("express"); const helmet = require("helmet");  const app = express(); app.use(helmet());  //...` This enables the following HTTP headers.
+
+-   Strict-Transport-Security
+-   X-frame-Options
+-   X-XSS-Protection
+-   X-Content-Type-Protection
+-   Content-Security-Policy
+-   Cache-Control
+-   Expect-CT
+-   Disable X-Powered-By
+
+These headers prevent malicious users from various types of attacks such as clickjacking, cross-site scripting, etc.
